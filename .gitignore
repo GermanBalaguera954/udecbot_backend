@@ -1,0 +1,39 @@
+# Entornos virtuales
+venv/
+.env
+env
+
+# Archivos y carpetas generados por Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Archivos de logs
+*.log
+*.sqlite3
+
+# Configuración de bases de datos locales o de desarrollo
+db.sqlite3
+
+# Archivos creados por sistemas operativos
+.DS_Store
+Thumbs.db
+
+# Migraciones de bases de datos (si utilizas Alembic o similares)
+alembic/versions/*
+
+# Archivos de configuración de IDEs/editores
+.vscode/
+.idea/
+
+# Dependencias instaladas (en caso de que uses pipenv o poetry)
+Pipfile.lock
+poetry.lock
+
+# Archivos relacionados con Docker (si lo utilizas)
+docker-compose.yml
+Dockerfile
+
+# Otros archivos sensibles
+.secret/
