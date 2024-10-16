@@ -1,4 +1,6 @@
-fastapi==0.100.0       # Framework principal para crear la API
-uvicorn==0.22.0        # Servidor ASGI que ejecuta la aplicación FastAPI
-psycopg2-binary==2.9.7 # Cliente para conectarse a PostgreSQL
-python-dotenv==1.0.0   # Para cargar variables de entorno desde el archivo .env
+fastapi==0.115.2
+uvicorn==0.31.1
+psycopg2-binary==2.9.9
+python-dotenv==1.0.1
+transformers==4.45.2
+spacy==3.8.2
