@@ -1,27 +1,46 @@
 #crud.py
+
+from psycopg2 import DatabaseError
 from .database import get_db_connection
+import psycopg2
 
 def check_first_time(student_id: int):
-    # Revisar si el estudiante tiene materias inscritas
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM enrollments WHERE student_id = %s", (student_id,))
-    enrollments = cur.fetchall()
-    cur.close()
-    conn.close()
-    
-    # Si no hay inscripciones, es la primera vez que interactúa
-    if len(enrollments) == 0:
-        return True
-    return False
-
-# Función para inscribir automáticamente las materias DN CAI
-def enroll_dn_cai(student_id: int, current_semester: int):
     conn = None
     try:
         conn = get_db_connection()
         cur = conn.cursor()
+        
+        # Consulta optimizada para verificar si hay al menos una inscripción
+        cur.execute("SELECT 1 FROM enrollments WHERE student_id = %s LIMIT 1", (student_id,))
+        enrollment_exists = cur.fetchone()
+        
+        return enrollment_exists is None  # Si no hay inscripciones, es la primera vez
+    except DatabaseError as e:
+        raise Exception(f"Error en la verificación del estudiante: {str(e)}")
+    finally:
+        if conn:
+            cur.close()
+            conn.close()
 
+def enroll_dn_cai(student_id: int):
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        conn.autocommit = False  # Iniciar transacción
+
+        # Obtener el semestre actual del estudiante desde la base de datos
+        cur.execute("""
+            SELECT current_semester FROM students WHERE id = %s
+        """, (student_id,))
+        student_info = cur.fetchone()
+
+        if not student_info:
+            raise Exception(f"No se encontró información del estudiante con ID {student_id}.")
+        
+        current_semester = student_info['current_semester']
+
+        # Inscribir materias DN CAI para todos los semestres hasta current_semester
         for semester in range(1, current_semester + 1):
             cur.execute("""
                 SELECT code FROM subjects 
@@ -40,304 +59,305 @@ def enroll_dn_cai(student_id: int, current_semester: int):
 
                 if not existing_enrollment:
                     cur.execute("""
-                        INSERT INTO enrollments (student_id, subject_code, enrollment_date) 
-                        VALUES (%s, %s, NOW())
+                        INSERT INTO enrollments (student_id, subject_code, enrollment_date, status) 
+                        VALUES (%s, %s, NOW(), 'inscrito')
                     """, (student_id, subject['code']))
-                    conn.commit()
-    except Exception as e:
+
+        conn.commit()  # Confirmar transacción solo si todo es exitoso
+    except DatabaseError as e:
+        conn.rollback()  # Revertir la transacción si algo falla
         raise Exception(f"Error al inscribir DN CAI: {str(e)}")
     finally:
         if conn:
             cur.close()
             conn.close()
 
-# Nueva función para reiniciar créditos al inicio del semestre
-# def reiniciar_creditos(student_id: int):
-#     conn = get_db_connection()
-#     cur = conn.cursor()
-
-#     # Reiniciar los créditos del estudiante para el semestre actual
-#     cur.execute("""
-#         UPDATE students 
-#         SET credits = 0 
-#         WHERE id = %s
-#     """, (student_id,))
-
-#     conn.commit()
-#     cur.close()
-#     conn.close()
-
-def enroll_subject(student_id: int, subject_code: str, semester: int, current_semester: int):
+def enroll_subject(student_id: int, subject_code: str):
     conn = get_db_connection()
     cur = conn.cursor()
 
-    # Obtener el semestre actual del estudiante desde la base de datos (sin la columna "credits")
-    cur.execute("""
-        SELECT current_semester FROM students WHERE id = %s
-    """, (student_id,))
-    
-    student_info = cur.fetchone()
+    try:
+        conn.autocommit = False
 
-    if not student_info:
-        cur.close()
-        conn.close()
-        raise Exception(f"No se encontró información del estudiante con ID {student_id}.")
-    
-    # Verificar si el semestre ingresado coincide con el semestre real del estudiante
-    if current_semester != student_info['current_semester']:
-        # Reiniciar los créditos al iniciar un nuevo semestre
-        # reiniciar_creditos(student_id)
-
-        # Actualizar el semestre en la base de datos
+        # Obtener el semestre actual del estudiante
         cur.execute("""
-            UPDATE students 
-            SET current_semester = %s 
-            WHERE id = %s
-        """, (current_semester, student_id))
+            SELECT current_semester FROM students WHERE id = %s
+        """, (student_id,))
+        student_info = cur.fetchone()
 
-        conn.commit()
+        if not student_info:
+            raise Exception(f"No se encontró información del estudiante con ID {student_id}.")
+        
+        current_semester = student_info['current_semester']
 
-    # Verificar si el código de la materia corresponde al semestre ingresado
-    cur.execute("""
-        SELECT semester, requirements, credits FROM subjects WHERE code = %s
-    """, (subject_code,))
+        # Verificar si el código de la materia corresponde al semestre
+        cur.execute("""
+            SELECT semester, requirements, credits FROM subjects WHERE code = %s
+        """, (subject_code,))
+        subject_info = cur.fetchone()
+
+        if not subject_info:
+            raise Exception(f"La materia con el código {subject_code} no existe.")
+
+        # Validar si el estudiante ha cumplido los requisitos de la materia
+        requirements = subject_info['requirements'].split(', ') if subject_info['requirements'] else []
+        if requirements:
+            requirements_clean = [req.replace('R - ', '').strip() for req in requirements]
+            cur.execute("""
+                SELECT subject_code FROM enrollments 
+                WHERE student_id = %s AND subject_code IN %s AND status = 'aprobado'
+            """, (student_id, tuple(requirements_clean)))
+
+            approved_subjects = cur.fetchall()
+            if len(approved_subjects) < len(requirements_clean):
+                raise Exception(f"No puedes inscribir {subject_code} porque no has aprobado los prerrequisitos necesarios.")
+
+            # Verificar si la materia ya está inscrita o reprobada
+            cur.execute("""
+                SELECT status FROM enrollments 
+                WHERE student_id = %s AND subject_code = %s
+            """, (student_id, subject_code))
+            existing_enrollment = cur.fetchone()
     
-    subject_info = cur.fetchone()
+            if existing_enrollment:
+                if existing_enrollment['status'] == 'reprobado':
+                    # Actualizar el estado a 'reinscrita' en lugar de crear una nueva inscripción
+                    cur.execute("""
+                        UPDATE enrollments
+                        SET status = 'reinscrita', enrollment_date = NOW()
+                        WHERE student_id = %s AND subject_code = %s
+                    """, (student_id, subject_code))
+                else:
+                    raise Exception("Ya has inscrito esta materia previamente y no está reprobada.")
+            else:
+                # Inscribir la materia si no está previamente inscrita
+                cur.execute("""
+                    INSERT INTO enrollments (student_id, subject_code, enrollment_date, status) 
+                    VALUES (%s, %s, NOW(), 'inscrito')
+                """, (student_id, subject_code))
+    
+        # Revisar los créditos actuales inscritos por el estudiante en el semestre actual
+        cur.execute("""
+            SELECT SUM(subjects.credits) as total_credits 
+            FROM enrollments 
+            JOIN subjects ON enrollments.subject_code = subjects.code 
+            WHERE enrollments.student_id = %s AND (subjects.semester = %s OR enrollments.status = 'reprobado' OR enrollments.status = 'reinscrita')
+        """, (student_id, current_semester))
 
-    if not subject_info:
+        total_credits = cur.fetchone()['total_credits'] or 0
+        subject_credits = subject_info['credits']
+
+        # Verificar si al inscribir esta materia se exceden los 18 créditos permitidos
+        if total_credits + subject_credits > 18:
+            raise Exception("No puedes inscribir más materias, ya has alcanzado el límite de 18 créditos en el semestre actual.")
+
+        # Inscribir automáticamente las materias DN CAI para el semestre actual
+        enroll_dn_cai(student_id)
+
+        # Recalcular los créditos usados después de inscribir la materia
+        cur.execute("""
+            SELECT SUM(subjects.credits) as total_credits 
+            FROM enrollments 
+            JOIN subjects ON enrollments.subject_code = subjects.code 
+            WHERE enrollments.student_id = %s 
+            AND (subjects.semester = %s OR enrollments.status = 'reinscrita')
+            AND enrollments.status IN ('inscrito', 'reinscrita')
+        """, (student_id, current_semester))
+
+        total_credits_after = cur.fetchone()['total_credits'] or 0
+        credits_remaining = 18 - total_credits_after
+
+        conn.commit()  # Confirmar la transacción
+
+        # Verificar si ya no tiene créditos disponibles
+        if credits_remaining == 0:
+            return {
+                "message": "Has alcanzado el límite de créditos permitidos para este semestre.",
+                "total_credits": total_credits_after,
+                "credits_remaining": credits_remaining,
+                "options": ["2. Cancelar materia", "3. Listar materias", "4. Salir"]
+            }
+
+        # Devolver el mensaje de éxito con la opción de continuar inscribiendo o volver al menú
+        return {
+            "message": "Materia inscrita exitosamente.",
+            "total_credits": total_credits_after,
+            "credits_remaining": credits_remaining,
+            "options": ["0. Volver al menú principal", "1. Continuar inscribiendo otra materia"]
+        }
+
+    except psycopg2.DatabaseError as e:
+        conn.rollback()
+        raise Exception(f"Error durante la inscripción: {str(e)}")
+    finally:
         cur.close()
         conn.close()
-        raise Exception(f"La materia con el código {subject_code} no existe.")
-    
-    # Validar si el estudiante ha cumplido los requisitos de la materia
-    if subject_info['requirements'] and subject_info['requirements'].strip():
-        requirements = subject_info['requirements'].split(', ')
-        for req in requirements:
-            # Validar si el estudiante ha inscrito y aprobado el prerrequisito
+
+def cancel_subject(student_id: int, subject_code: str):
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    try:
+        conn.autocommit = False  # Iniciar transacción
+
+        # Obtener el semestre actual del estudiante
+        cur.execute("""
+            SELECT current_semester FROM students WHERE id = %s
+        """, (student_id,))
+        student_info = cur.fetchone()
+
+        if not student_info:
+            raise Exception(f"No se encontró información del estudiante con ID {student_id}.")
+
+        current_semester = student_info['current_semester']
+
+        # Obtener información de la materia
+        cur.execute("""
+            SELECT semester FROM subjects WHERE code = %s
+        """, (subject_code,))
+        subject_info = cur.fetchone()
+
+        if not subject_info:
+            raise Exception(f"La materia con el código {subject_code} no existe.")
+
+        # Verificar si la materia está inscrita o reinscrita
+        cur.execute("""
+            SELECT status FROM enrollments 
+            WHERE student_id = %s AND subject_code = %s
+        """, (student_id, subject_code))
+        existing_enrollment = cur.fetchone()
+
+        if not existing_enrollment:
+            raise Exception(f"La materia {subject_code} no está inscrita para el estudiante {student_id}.")
+
+        # Validar si la materia pertenece al semestre actual o es una reinscripción
+        if subject_info['semester'] != current_semester and existing_enrollment['status'] != 'reinscrita':
+            raise Exception(f"No puedes cancelar la materia {subject_code} porque no pertenece al semestre actual.")
+
+        # Si la materia está reinscrita, actualizar el estado a "reprobado"
+        if existing_enrollment['status'] == 'reinscrita':
             cur.execute("""
-                SELECT * FROM enrollments 
-                WHERE student_id = %s AND subject_code = %s AND status = 'aprobado'
-            """, (student_id, req.replace('R - ', '')))
-            if not cur.fetchone():
-                cur.close()
-                conn.close()
-                raise Exception(f"No puedes inscribir {subject_code} porque no has aprobado el prerrequisito {req.replace('R - ', '')}.")
-
-    # Verificar si la materia ya está inscrita
-    cur.execute("""
-        SELECT status FROM enrollments 
-        WHERE student_id = %s AND subject_code = %s
-    """, (student_id, subject_code))
-
-    existing_enrollment = cur.fetchone()
-
-    if existing_enrollment:
-        # Si la materia está inscrita pero no fue reprobada, no permitir reinscripción
-        if existing_enrollment['status'] == 'reprobado':
-            # Insertar una nueva fila indicando que la materia fue reinscrita
-            cur.execute("""
-                INSERT INTO enrollments (student_id, subject_code, enrollment_date, status) 
-                VALUES (%s, %s, NOW(), 'reinscrita')
+                UPDATE enrollments 
+                SET status = 'reprobado' 
+                WHERE student_id = %s AND subject_code = %s
             """, (student_id, subject_code))
         else:
-            cur.close()
-            conn.close()
-            raise Exception("Ya has inscrito esta materia previamente y no está reprobada.")
+            # Si la materia está inscrita, eliminar la inscripción
+            cur.execute("""
+                DELETE FROM enrollments 
+                WHERE student_id = %s AND subject_code = %s
+            """, (student_id, subject_code))
 
-    # Verificar si el estudiante ha inscrito todas las materias del semestre actual o si está repitiendo una materia
-    if subject_info['semester'] > current_semester:
-        # Verificar cuántas materias del semestre actual están inscritas
+        # Recalcular los créditos restantes después de cancelar la materia
         cur.execute("""
-            SELECT COUNT(*) as total_inscritas
+            SELECT SUM(subjects.credits) as total_credits 
             FROM enrollments 
-            JOIN subjects ON enrollments.subject_code = subjects.code
+            JOIN subjects ON enrollments.subject_code = subjects.code 
             WHERE enrollments.student_id = %s AND subjects.semester = %s
         """, (student_id, current_semester))
-        
-        total_inscritas = cur.fetchone()['total_inscritas']
 
-        # Contar cuántas materias hay en el semestre actual
-        cur.execute("""
-            SELECT COUNT(*) as total_materias
-            FROM subjects 
-            WHERE semester = %s AND credits > 0
-        """, (current_semester,))
-        
-        total_materias = cur.fetchone()['total_materias']
+        total_credits_after = cur.fetchone()['total_credits'] or 0
+        credits_remaining = 18 - total_credits_after
 
-        # Verificar si el estudiante está repitiendo una materia
-        cur.execute("""
-            SELECT COUNT(*) as total_reprobadas
-            FROM enrollments 
-            WHERE student_id = %s AND status = 'reprobado'
-        """, (student_id,))
-        
-        total_reprobadas = cur.fetchone()['total_reprobadas']
+        conn.commit()  # Confirmar la transacción
 
-        # Si no ha inscrito todas las materias y no está repitiendo ninguna, bloquear la inscripción
-        if total_inscritas < total_materias and total_reprobadas == 0:
-            cur.close()
-            conn.close()
-            raise Exception(f"No puedes adelantar materias sin inscribir todas las materias del semestre actual. Te faltan {total_materias - total_inscritas} materias por inscribir.")
-        
-        # Si está repitiendo, permitir la inscripción siempre que el número de materias inscritas + reprobadas sea suficiente
-        if total_inscritas + total_reprobadas < total_materias:
-            cur.close()
-            conn.close()
-            raise Exception(f"No puedes adelantar materias. Debes inscribir todas las materias obligatorias del semestre actual o repetir las que perdiste.")
+        return {
+            "message": f"Materia {subject_code} cancelada exitosamente.",
+            "total_credits": total_credits_after,
+            "credits_remaining": credits_remaining
+        }
 
-    # Validar si la materia corresponde al semestre actual o si se puede adelantar
-    if subject_info['semester'] > current_semester + 2:
+    except psycopg2.DatabaseError as e:
+        conn.rollback()
+        raise Exception(f"Error al cancelar la materia: {str(e)}")
+    finally:
         cur.close()
         conn.close()
-        raise Exception(f"No puedes adelantar más de dos semestres. La materia {subject_code} pertenece al semestre {subject_info['semester']}.")
-
-    # Verificar si la materia es de un semestre anterior
-    if subject_info['semester'] < current_semester:
-        # Verificar si el estudiante reprobó la materia
-        cur.execute("""
-            SELECT * FROM enrollments 
-            WHERE student_id = %s AND subject_code = %s AND status = 'reprobado'
-        """, (student_id, subject_code))
-
-        failed_subject = cur.fetchone()
-
-        if not failed_subject:
-            cur.close()
-            conn.close()
-            raise Exception(f"No puedes inscribir materias de semestres anteriores, a menos que las hayas reprobado. La materia {subject_code} pertenece al semestre {subject_info['semester']}.")
-
-    # Revisar los créditos actuales inscritos por el estudiante en el semestre actual
-    cur.execute("""
-        SELECT SUM(subjects.credits) as total_credits 
-        FROM enrollments 
-        JOIN subjects ON enrollments.subject_code = subjects.code 
-        WHERE enrollments.student_id = %s 
-        AND (subjects.semester = %s OR enrollments.status = 'reprobado')
-    """, (student_id, current_semester))
-
-    total_credits = cur.fetchone()['total_credits'] or 0
-
-    # Obtener los créditos de la materia antes de inscribirla
-    subject_credits = subject_info['credits']
-
-    # Verificar si al inscribir esta materia se exceden los 18 créditos permitidos para el semestre actual
-    if total_credits + subject_credits > 18:
-        cur.close()
-        conn.close()
-        raise Exception("No puedes inscribir más materias, ya has alcanzado el límite de 18 créditos en el semestre actual.")
-
-    # Inscribir la materia
-    cur.execute("""
-        INSERT INTO enrollments (student_id, subject_code, enrollment_date, status) 
-        VALUES (%s, %s, NOW(), 'inscrito')
-    """, (student_id, subject_code))
-
-    conn.commit()
-
-    # Inscribir automáticamente las materias DN CAI para el semestre actual
-    enroll_dn_cai(student_id, current_semester)
-
-    # Actualizar el total de créditos después de inscribir la materia
-    cur.execute("""
-        SELECT SUM(subjects.credits) as total_credits 
-        FROM enrollments 
-        JOIN subjects ON enrollments.subject_code = subjects.code 
-        WHERE enrollments.student_id = %s AND subjects.semester = %s
-    """, (student_id, current_semester))
-
-    total_credits_after = cur.fetchone()['total_credits'] or 0
-    credits_remaining = 18 - total_credits_after
-
-    cur.close()
-    conn.close()
-
-    return {
-        "message": "Materia inscrita exitosamente.",
-        "total_credits": total_credits_after,
-        "credits_remaining": credits_remaining
-    }
-    
-def cancel_subject(student_id: int, subject_code: str, current_semester: int):
-    conn = get_db_connection()
-    cur = conn.cursor()
-
-    # Obtener información de la materia para validar el semestre
-    cur.execute("""
-        SELECT semester FROM subjects WHERE code = %s
-    """, (subject_code,))
-    
-    subject_info = cur.fetchone()
-
-    if not subject_info:
-        cur.close()
-        conn.close()
-        raise Exception(f"La materia con el código {subject_code} no existe.")
-
-    # Validar si la materia pertenece al semestre actual
-    if subject_info['semester'] != current_semester:
-        cur.close()
-        conn.close()
-        raise Exception(f"No puedes cancelar la materia {subject_code} porque no pertenece al semestre digitado.")
-
-    # Verificar si la materia está inscrita y su estado
-    cur.execute("""
-        SELECT status FROM enrollments 
-        WHERE student_id = %s AND subject_code = %s
-    """, (student_id, subject_code))
-    
-    existing_enrollment = cur.fetchone()
-
-    if not existing_enrollment:
-        cur.close()
-        conn.close()
-        raise Exception(f"La materia {subject_code} no está inscrita para el estudiante {student_id}.")
-    
-    # Verificar si la materia está aprobada, no se debe permitir la cancelación
-    if existing_enrollment['status'] == 'aprobado':
-        cur.close()
-        conn.close()
-        raise Exception(f"No puedes cancelar la materia {subject_code} porque ya ha sido aprobada.")
-
-    # Si no está aprobada, procedemos a cancelarla
-    cur.execute("""
-        DELETE FROM enrollments 
-        WHERE student_id = %s AND subject_code = %s
-    """, (student_id, subject_code))
-    
-    conn.commit()
-    cur.close()
-    conn.close()
-
-    return {"message": f"Materia {subject_code} cancelada exitosamente para el estudiante {student_id}."}
-
 
 def list_enrollments(student_id: int):
-    # Obtener el semestre actual del estudiante
-    conn = get_db_connection()
-    cur = conn.cursor()
-    
-    cur.execute("""
-        SELECT current_semester FROM students WHERE id = %s
-    """, (student_id,))
-    
-    current_semester = cur.fetchone()['current_semester']
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
 
-    # Listar las materias inscritas del semestre actual y las reprobadas
-    cur.execute("""
-        SELECT subjects.code, subjects.name, subjects.credits, enrollments.status
-        FROM enrollments 
-        JOIN subjects ON enrollments.subject_code = subjects.code 
-        WHERE enrollments.student_id = %s 
-        AND (subjects.semester = %s OR enrollments.status = 'reprobado')
-    """, (student_id, current_semester))
+        # Obtener el semestre actual del estudiante
+        cur.execute("""
+            SELECT current_semester FROM students WHERE id = %s
+        """, (student_id,))
+        current_semester = cur.fetchone()['current_semester']
 
-    subjects = cur.fetchall()
-    cur.close()
-    conn.close()
+        # Actualizar materias reprobadas a 'reinscrita' si están reprobadas y en el semestre actual
+        cur.execute("""
+            UPDATE enrollments SET status = 'reinscrita'
+            WHERE student_id = %s AND status = 'reprobado' AND subject_code IN (
+                SELECT code FROM subjects WHERE semester <= %s
+            )
+        """, (student_id, current_semester))
 
-    if not subjects:
-        return {"message": "No tienes materias inscritas en el semestre actual ni materias reprobadas."}
-    
-    return {"subjects": subjects}
+        # Obtener materias inscritas o reinscritas, independientemente del semestre
+        cur.execute("""
+            SELECT subjects.code, subjects.name, subjects.credits, enrollments.status
+            FROM enrollments 
+            JOIN subjects ON enrollments.subject_code = subjects.code 
+            WHERE enrollments.student_id = %s
+            AND enrollments.status IN ('inscrito', 'reinscrita')
+            ORDER BY subjects.code
+        """, (student_id,))
+        subjects = cur.fetchall()
 
+        # Asegurarse de que solo devuelve materias que estén inscritas o reinscritas correctamente
+        valid_subjects = [subject for subject in subjects if subject['status'] in ['inscrito', 'reinscrita']]
+        
+        if not valid_subjects:
+            return {"message": "No tienes materias inscritas ni reinscritas."}
+
+        return {"subjects": valid_subjects}
+
+    except psycopg2.DatabaseError as e:
+        raise Exception(f"Error al listar materias: {str(e)}")
+    finally:
+        if conn:
+            cur.close()
+            conn.close()
+
+def list_used_credits(student_id: int):
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+
+        # Obtener el semestre actual del estudiante
+        cur.execute("""
+            SELECT current_semester FROM students WHERE id = %s
+        """, (student_id,))
+        result = cur.fetchone()
+        
+        if not result or result['current_semester'] is None:
+            raise Exception(f"No se encontró el semestre actual para el estudiante con ID {student_id}.")
+
+        current_semester = result['current_semester']
+
+        # Consultar los créditos usados en el semestre actual o materias reinscritas
+        cur.execute("""
+            SELECT SUM(subjects.credits) as total_credits
+            FROM enrollments
+            JOIN subjects ON enrollments.subject_code = subjects.code
+            WHERE enrollments.student_id = %s 
+            AND (subjects.semester = %s OR enrollments.status = 'reinscrita')
+            AND enrollments.status IN ('inscrito', 'reinscrita')
+        """, (student_id, current_semester))
+
+        total_credits = cur.fetchone()['total_credits'] or 0
+
+        return {
+            "student_id": student_id,
+            "current_semester": current_semester,
+            "total_credits_used": total_credits
+        }
+
+    except DatabaseError as e:
+        raise Exception(f"Error al listar los créditos: {str(e)}")
+    finally:
+        if conn:
+            cur.close()
+            conn.close()
