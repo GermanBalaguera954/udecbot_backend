@@ -25,8 +25,19 @@ def execute_query(query, params=None):
                 cursor.execute(query, params)
                 if cursor.description:  
                     return cursor.fetchall()
+                else:
+                    return [] 
     except psycopg2.Error as e:
         raise Exception(f"Error ejecutando la consulta: {e}")
+
+def execute_single_query(query, params=None):
+    try:
+        with get_db_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(query, params)
+                return cursor.fetchone()
+    except psycopg2.Error as e:
+        raise Exception(f"Error ejecutando la consulta de un solo resultado: {e}")
 
 def execute_non_query(query, params=None):
     try:

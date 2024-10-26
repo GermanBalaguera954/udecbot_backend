@@ -1,53 +1,91 @@
-# nlp_utils.py
-
 import spacy
-from fastapi import HTTPException
-from .crud import enroll_subject, cancel_subject, list_enrollments, list_used_credits
+from .crud import get_student_info, enroll_dn_cai, enroll_subject
+import re
 
-# Cargar el modelo preentrenado
+# Cargar el modelo de SpaCy para el procesamiento de lenguaje natural
 nlp = spacy.load("es_core_news_sm")
 
-# Función para extraer el código de materia
-def extract_subject_code(doc):
-    for ent in doc.ents:
-        if ent.label_ == "MATERIA":
-            return ent.text
-    return None
+# Detectar intenciones con base en el input del usuario
+def detect_intent(doc):
+    for token in doc:
+        if token.lemma_ in ["hola", "saludar", "buenas", "qué tal", "qué más", "cómo estás", "dia", "tarde", "noche"]:
+            return "saludo"
+        elif token.lemma_ in ["inscribir", "matricular", "añadir"]:
+            return "inscribir"
+    return None  # Devuelve None si no se encuentra una intención
 
-# Función para procesar el lenguaje natural y realizar acciones
-def process_nlp_and_act(user_input: str, student_id: int):
+# Procesar el input del usuario y realizar la acción correspondiente
+def process_nlp_and_act(user_input: str, student_id: int = None, saludo_inicial=False, inscribir_estado=False):
+    # Crear el documento de SpaCy con el input del usuario
     doc = nlp(user_input.lower())
+    intent = detect_intent(doc)
 
-    materias = [ent.text for ent in doc.ents if ent.label_ == "MATERIA"]
-
-    # Acciones que se pueden identificar en el input del usuario
-    if any(intent in user_input for intent in ["inscribir", "inscribirme", "quiero inscribir"]):
-        if materias:
-            subject_code = materias[0]  # Usa la primera materia detectada
-            return enroll_subject(student_id, subject_code)
-        else:
-            raise HTTPException(status_code=400, detail="No se encontró un código de materia válido para inscribir.")
-
-    elif any(intent in user_input for intent in ["cancelar", "quiero cancelar", "me gustaría cancelar"]):
-        if materias:
-            subject_code = materias[0]  # Usa la primera materia detectada
-            return cancel_subject(student_id, subject_code)
-        else:
-            raise HTTPException(status_code=400, detail="No se encontró un código de materia válido para cancelar.")
-
-    elif any(intent in user_input for intent in ["listar materias", "ver materias", "mostrar materias"]):
-        return list_enrollments(student_id)
-
-    elif any(intent in user_input for intent in ["creditos usados", "consultar creditos", "cuántos créditos he usado"]):
-        resultado = list_used_credits(student_id)
+    # 1. Saludo inicial del chatbot
+    if not saludo_inicial:
         return {
-            "message": f"El estudiante ha usado {resultado['total_credits_used']} créditos en el semestre {resultado['current_semester']}."
+            "message": "¡Hola! Soy udecbot, tu asistente virtual. "
         }
 
-    elif any(intent in user_input for intent in ["ayuda", "información", "necesito ayuda"]):
-        return {
-            "message": "Puedes inscribir o cancelar materias, listar tus materias actuales o consultar tus créditos usados."
-        }
+    # 2. El usuario responde con un saludo
+    if intent == "saludo" and student_id is None:
+        # Formato de mensaje como HTML
+        message = """
+        <p>¿En qué puedo ayudarte hoy?</p>
+        <p>Puedo asistirte en las siguientes opciones:</p>
+        <ul>
+            <li>Inscribir o cancelar materias</li>
+            <li>Listar tus materias actuales</li>
+            <li>Consultar los créditos que has usado</li>
+        </ul>
+        <p>Por favor, ingresa tu código de estudiante para continuar.</p>
+        """
+        return {"message": message}
 
-    else:
-        return {"message": "No se pudo identificar la acción solicitada. Intenta inscribir, cancelar, listar materias o consultar créditos."}
+    if student_id is None and user_input.isdigit():
+        student_id = int(user_input)
+        student_info = get_student_info(student_id)
+
+        if student_info:
+            # Mensaje completo con la información organizada
+            message = f"""
+                <p>Esta es la información que tengo actualmente para <strong>{student_info['name']}</strong>:</p>
+                <p>Semestre actual: {student_info['current_semester']}</p>
+                <p>Materias actuales:</p>
+                <ol>
+            """
+            for subject in student_info["subjects"]:
+                message += f"<li>{subject['name']} ({subject['status']})</li>"
+
+            message += f"""
+                </ol>
+                <p>Créditos usados actualmente: {student_info['credits_used']}</p>
+                <p>¿Qué deseas hacer....................?</p>
+                
+            """
+            return {"message": message, "inscribir_estado": False}
+
+        else:
+            return {"message": "No se encontró información para el código de estudiante proporcionado. Por favor verifica el ID e inténtalo nuevamente."}
+
+    # Si el usuario solicita inscribir, ejecuta ambas funciones
+    if intent == "inscribir" and student_id is not None:
+        try:
+            # 1. Ejecutar inscripción de DN CAI automáticamente
+            enroll_dn_cai(student_id)
+            dn_cai_message = "Las materias DN CAI han sido inscritas automáticamente."
+
+            # 2. Solicitar al usuario el código de la materia específica
+            return {
+                "message": f"{dn_cai_message} Por favor, ingresa el código de la materia específica que deseas inscribir.",
+                "inscribir_estado": True  # Para esperar el código de materia específica
+            }
+        except Exception as e:
+            return {"message": f"Error al intentar inscribir materias DN CAI: {str(e)}"}
+
+    # Inscribir materia específica cuando el usuario ingrese el código
+    if inscribir_estado and student_id is not None:
+        enroll_response = enroll_subject(student_id, user_input)
+        return enroll_response  # Responde con el mensaje de inscripción
+
+    # Mensaje para acciones no reconocidas
+    return {"message": "No se pudo identificar la acción solicitada. Intenta con 'inscribir', 'cancelar', 'listar' o 'consultar créditos'."}

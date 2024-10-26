@@ -3,24 +3,65 @@
 from psycopg2 import DatabaseError
 from .database import get_db_connection
 import psycopg2
+from psycopg2.extras import RealDictCursor
 
-def check_first_time(student_id: int):
-    conn = None
+def get_student_info(student_id: int):
+    conn = get_db_connection()
+    cur = conn.cursor(cursor_factory=RealDictCursor)  # Usar RealDictCursor para obtener diccionarios
     try:
-        conn = get_db_connection()
-        cur = conn.cursor()
+        # Obtener información del estudiante
+        cur.execute("SELECT name, current_semester FROM students WHERE id = %s", (student_id,))
+        result = cur.fetchone()
         
-        # Consulta optimizada para verificar si hay al menos una inscripción
-        cur.execute("SELECT 1 FROM enrollments WHERE student_id = %s LIMIT 1", (student_id,))
-        enrollment_exists = cur.fetchone()
+        if not result:
+            print("No se encontró el estudiante en la base de datos.")
+            return None
+
+        name = result["name"]
+        current_semester = result["current_semester"]
+
+        # Actualizar materias reprobadas a 'reinscrita' si están reprobadas y en el semestre actual o anteriores
+        cur.execute("""
+            UPDATE enrollments SET status = 'reinscrita'
+            WHERE student_id = %s AND status = 'reprobado' AND subject_code IN (
+                SELECT code FROM subjects WHERE semester <= %s
+            )
+        """, (student_id, current_semester))
+        conn.commit()  # Confirmar la actualización en la base de datos
+
+        # Obtener materias inscritas o reinscritas
+        cur.execute("""
+            SELECT subjects.code, subjects.name, enrollments.status
+            FROM enrollments
+            JOIN subjects ON enrollments.subject_code = subjects.code
+            WHERE enrollments.student_id = %s AND enrollments.status IN ('inscrito', 'reinscrita')
+        """, (student_id,))
         
-        return enrollment_exists is None  # Si no hay inscripciones, es la primera vez
-    except DatabaseError as e:
-        raise Exception(f"Error en la verificación del estudiante: {str(e)}")
+        subjects = [{"code": subj["code"], "name": subj["name"], "status": subj["status"]} for subj in cur.fetchall()]
+
+        # Obtener créditos usados en el semestre actual
+        cur.execute("""
+            SELECT SUM(subjects.credits) as total_credits
+            FROM enrollments
+            JOIN subjects ON enrollments.subject_code = subjects.code
+            WHERE enrollments.student_id = %s AND enrollments.status IN ('inscrito', 'reinscrita')
+        """, (student_id,))
+        
+        credits_used_result = cur.fetchone()
+        credits_used = credits_used_result["total_credits"] if credits_used_result and credits_used_result["total_credits"] is not None else 0
+
+        return {
+            "name": name,
+            "current_semester": current_semester,
+            "subjects": subjects,  # Incluye el estado correctamente
+            "credits_used": credits_used
+        }
+    except Exception as e:
+        print(f"Error detallado: {str(e)}")
+        raise Exception(f"Error al obtener la información del estudiante: {str(e)}")
     finally:
-        if conn:
-            cur.close()
-            conn.close()
+        cur.close()
+        conn.close()
 
 def enroll_dn_cai(student_id: int):
     conn = None
@@ -262,7 +303,7 @@ def cancel_subject(student_id: int, subject_code: str):
         conn.commit()  # Confirmar la transacción
 
         return {
-            "message": f"Materia {subject_code} cancelada exitosamente.",
+            "message": f"Materias canceladas: {', '.join([subject['code'] for subject in cancel_subject])}.",
             "total_credits": total_credits_after,
             "credits_remaining": credits_remaining
         }

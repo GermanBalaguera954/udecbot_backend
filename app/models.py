@@ -1,11 +1,11 @@
-#models.py
-
 from pydantic import BaseModel, Field
 
-class EnrollRequest(BaseModel):
+class BaseRequest(BaseModel):
     student_id: int = Field(..., gt=0, description="El ID del estudiante debe ser mayor que 0")
-    subject_code: str = Field(..., min_length=1, description="El código de la materia no puede estar vacío")
+    subject_code: str = Field(..., pattern=r'^CAD\d{11}$', description="El código de la materia debe seguir el formato 'CAD' seguido de 11 dígitos")
 
-class CancelRequest(BaseModel):
-    student_id: int = Field(..., gt=0, description="El ID del estudiante debe ser mayor que 0")
-    subject_code: str = Field(..., min_length=1, description="El código de la materia no puede estar vacío")
+class EnrollRequest(BaseRequest):
+    pass
+
+class CancelRequest(BaseRequest):
+    pass
