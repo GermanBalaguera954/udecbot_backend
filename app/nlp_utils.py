@@ -11,7 +11,7 @@ last_message = None
 def detect_intent(doc):
     for intent, keywords in INTENT_VOCABULARY.items():
         if any(token.lemma_ in keywords for token in doc):
-            print(f"Intención detectada: {intent}")  # Depuración
+            print(f"Intención detectada: {intent}")
             return intent
     print("Ninguna intención detectada")
     return None
@@ -22,9 +22,9 @@ def extract_subject_code(doc):
     print(f"Texto para buscar código de materia: '{text}'")
     match = re.search(pattern, text)
     if match:
-        print(f"Código de materia detectado: {match.group(0)}")  # Depuración
+        print(f"Código de materia detectado: {match.group(0)}")
     else:
-        print("No se encontró código de materia")  # Depuración
+        print("No se encontró código de materia")
     return match.group(0) if match else None
 
 def process_nlp_and_act(user_input: str, student_id: int = None):
@@ -45,7 +45,9 @@ def process_nlp_and_act(user_input: str, student_id: int = None):
 
     if intent == "saludo" and student_id is None:
         return {
-            "message": "¡Bienvenid@! Antes de continuar, por favor ingresa tu código de estudiante."
+            "message": "\t\t¡Bienvenid@!\n\n" 
+            "Antes de continuar.\n\n" 
+            "Por favor ingresa tu código de estudiante."
         }
 
     # 2. Solicitar el código de estudiante si aún no ha sido ingresado
@@ -55,18 +57,19 @@ def process_nlp_and_act(user_input: str, student_id: int = None):
             student_info = get_student_info(student_id)
             if student_info:
                 message = (
-                    f"¡Interesante!, {student_info['name']}.\n"
-                    f" Estás en el semestre {student_info['current_semester']}.\n"
+                    f"\t\t¡Interesante!.......... {student_info['name']}.\n\n"
+                    f" Estás en el semestre {student_info['current_semester']}.\n\n"
                     
                     + "Materias inscritas:\n"
                     + "\n".join(f"- {subject['name']} ({subject['status']})" for subject in student_info["subjects"])
-                    + f"\nCréditos usados: {student_info['credits_used']}\n"
-                    + "¿Qué deseas hacer? Puedes 'inscribir', 'cancelar' o 'listar' materias."
+                    + f"\n\nCréditos usados: {student_info['credits_used']}\n\n"
+                    + "¿Qué deseas hacer? \n\n"
+                    + "Puedes 'inscribir', 'cancelar' o 'listar' materias."
                 )
                 return {"message": message, "student_id": student_id, "student_info": student_info}
             else:
                 return {"message": "No se encontró un estudiante con ese código. Por favor intenta nuevamente."}
-        return {"message": "Por favor, ingresa tu código de estudiante para continuar."}
+        # return {"message": "Por favor, digita tu código de estudiante para continuar."}
 
     # 3. Manejo de intención de "salir"
     if intent == "salir":
@@ -75,9 +78,9 @@ def process_nlp_and_act(user_input: str, student_id: int = None):
             "exit": True
         }
 
-    # Solicitar ID del estudiante si no está presente
-    if intent == "saludo" and student_id is None:
-        return {"message": "¡Hola! Antes de continuar, por favor ingresa tu código de estudiante."}
+    # # Solicitar ID del estudiante si no está presente
+    # if intent == "saludo" and student_id is None:
+    #     return {"message": "¡Hola! Antes de continuar, por favor ingresa tu código de estudiante."}
 
     # Obtener y validar información del estudiante
     if student_id is None and user_input.isdigit():
@@ -94,6 +97,9 @@ def process_nlp_and_act(user_input: str, student_id: int = None):
             )
             return {"message": message, "student_id": student_id, "student_info": student_info}
 
+    # URL del archivo de Excel con los códigos de materias
+    link_excel = "https://mailunicundiedu-my.sharepoint.com/:x:/g/personal/gbalaguera_ucundinamarca_edu_co/EaUNVhZL07dNveIUJSSXNjwBk63mzrtrINk517pZMP6WSg?e=DlrGag"
+    
     # Procesar acciones de inscribir, cancelar o listar
     if student_id:
         student_info = get_student_info(student_id)
@@ -102,7 +108,8 @@ def process_nlp_and_act(user_input: str, student_id: int = None):
             subject_code = extract_subject_code(doc)
             if subject_code:
                 return enroll_student_in_subject({"id": student_id, "current_semester": student_info["current_semester"]}, subject_code)
-            return {"message": "Por favor, proporciona el código de la materia que deseas inscribir."}
+            return {"message": "Por favor, digita el código de la materia que deseas inscribir.\n",
+            "link": link_excel}
 
         elif intent == "cancelar":
             subject_code = extract_subject_code(doc)
