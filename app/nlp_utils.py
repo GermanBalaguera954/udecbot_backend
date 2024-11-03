@@ -1,20 +1,48 @@
 # nlp_utils.py
 
 import spacy
+from sentence_transformers import SentenceTransformer, util
 from .crud import get_student_info, enroll_student_in_subject, cancel_subject, list_enrollments
 from .intents import INTENT_VOCABULARY
 import re
 
+# Cargar el modelo de embeddings
+embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+
 nlp = spacy.load("es_core_news_sm")
 last_message = None
 
+# Preparar ejemplos de intenciones y calcular sus embeddings
+def load_intent_embeddings():
+    intent_embeddings = {}
+    for intent, examples in INTENT_VOCABULARY.items():
+        intent_embeddings[intent] = [embedding_model.encode(example) for example in examples]
+    return intent_embeddings
+
+intent_embeddings = load_intent_embeddings()
+
 def detect_intent(doc):
-    for intent, keywords in INTENT_VOCABULARY.items():
-        if any(token.lemma_ in keywords for token in doc):
-            print(f"Intención detectada: {intent}")
-            return intent
-    print("Ninguna intención detectada")
-    return None
+    # Convertir el mensaje en un embedding
+    message_embedding = embedding_model.encode(doc.text)
+    
+    # Calcular la similitud entre el embedding del mensaje y las intenciones
+    best_intent = None
+    highest_similarity = 0.0
+    
+    for intent, embeddings in intent_embeddings.items():
+        for intent_embedding in embeddings:
+            similarity = util.cos_sim(message_embedding, intent_embedding).item()
+            if similarity > highest_similarity:
+                highest_similarity = similarity
+                best_intent = intent
+    
+    # Establecer un umbral de similitud para detectar la intención
+    if highest_similarity >= 0.5:
+        print(f"Intención detectada: {best_intent} (similitud: {highest_similarity})")
+        return best_intent
+    else:
+        print("Ninguna intención detectada con alta similitud")
+        return None
 
 def extract_subject_code(doc):
     pattern = r"[A-Z]{3}\d+"
@@ -30,14 +58,13 @@ def extract_subject_code(doc):
 def process_nlp_and_act(user_input: str, student_id: int = None):
     global last_message
 
-    # Detectar mensaje repetido
     if user_input == last_message:
         return {
             "message": "Parece que estás enviando el mismo mensaje varias veces. ¿Hay algo más en lo que puedo ayudarte?",
             "repeat_warning": True
         }
     
-    last_message = user_input  # Actualizar último mensaje
+    last_message = user_input
     
     # Procesar el saludo del usuario y pedir el código de estudiante si no lo tenemos
     doc = nlp(user_input)
@@ -50,16 +77,15 @@ def process_nlp_and_act(user_input: str, student_id: int = None):
             "Por favor ingresa tu código de estudiante."
         }
 
-    # 2. Solicitar el código de estudiante si aún no ha sido ingresado
+    # Solicitar el código de estudiante si aún no ha sido ingresado
     if student_id is None:
-        if user_input.isdigit():  # Si el usuario envía el `student_id` como un número
+        if user_input.isdigit():
             student_id = int(user_input)
             student_info = get_student_info(student_id)
             if student_info:
                 message = (
                     f"\t\t¡Interesante!.......... {student_info['name']}.\n\n"
                     f" Estás en el semestre {student_info['current_semester']}.\n\n"
-                    
                     + "Materias inscritas:\n"
                     + "\n".join(f"- {subject['name']} ({subject['status']})" for subject in student_info["subjects"])
                     + f"\n\nCréditos usados: {student_info['credits_used']}\n\n"
@@ -69,33 +95,14 @@ def process_nlp_and_act(user_input: str, student_id: int = None):
                 return {"message": message, "student_id": student_id, "student_info": student_info}
             else:
                 return {"message": "No se encontró un estudiante con ese código. Por favor intenta nuevamente."}
-        # return {"message": "Por favor, digita tu código de estudiante para continuar."}
 
-    # 3. Manejo de intención de "salir"
+    # Manejo de intención de "salir"
     if intent == "salir":
         return {
             "message": "Gracias por utilizar el chatbot. ¡Hasta luego!",
             "exit": True
         }
 
-    # Obtener y validar información del estudiante
-    if student_id is None and user_input.isdigit():
-        student_id = int(user_input)
-        student_info = get_student_info(student_id)
-
-        if student_info:
-            message = (
-                f"Hola, {student_info['name']}. Estás en el semestre {student_info['current_semester']}.\n"
-                + "Materias inscritas:\n"
-                + "\n".join(f"- {subject['name']} ({subject['status']})" for subject in student_info["subjects"])
-                + f"\nCréditos usados: {student_info['credits_used']}\n"
-                + "¿Qué deseas hacer? Puedes 'inscribir', 'cancelar' o 'listar' materias."
-            )
-            return {"message": message, "student_id": student_id, "student_info": student_info}
-
-    # URL del archivo de Excel con los códigos de materias
-    link_excel = "https://mailunicundiedu-my.sharepoint.com/:b:/g/personal/gbalaguera_ucundinamarca_edu_co/EZ4fvNspPzFHidfIIkVaWVQB5lFr_HKsEWAZZemFxgkg9w?e=946Q9e"
-    
     # Procesar acciones de inscribir, cancelar o listar
     if student_id:
         student_info = get_student_info(student_id)
@@ -104,8 +111,7 @@ def process_nlp_and_act(user_input: str, student_id: int = None):
             subject_code = extract_subject_code(doc)
             if subject_code:
                 return enroll_student_in_subject({"id": student_id, "current_semester": student_info["current_semester"]}, subject_code)
-            return {"message": "Por favor, digita el código de la materia que deseas inscribir.\n",
-            "link": link_excel}
+            return {"message": "Por favor, digita el código de la materia que deseas inscribir.\n"}
 
         elif intent == "cancelar":
             subject_code = extract_subject_code(doc)
