@@ -78,10 +78,6 @@ def process_nlp_and_act(user_input: str, student_id: int = None):
             "exit": True
         }
 
-    # # Solicitar ID del estudiante si no está presente
-    # if intent == "saludo" and student_id is None:
-    #     return {"message": "¡Hola! Antes de continuar, por favor ingresa tu código de estudiante."}
-
     # Obtener y validar información del estudiante
     if student_id is None and user_input.isdigit():
         student_id = int(user_input)
@@ -98,7 +94,7 @@ def process_nlp_and_act(user_input: str, student_id: int = None):
             return {"message": message, "student_id": student_id, "student_info": student_info}
 
     # URL del archivo de Excel con los códigos de materias
-    link_excel = "https://mailunicundiedu-my.sharepoint.com/:x:/g/personal/gbalaguera_ucundinamarca_edu_co/EaUNVhZL07dNveIUJSSXNjwBk63mzrtrINk517pZMP6WSg?e=DlrGag"
+    link_excel = "https://mailunicundiedu-my.sharepoint.com/:b:/g/personal/gbalaguera_ucundinamarca_edu_co/EZ4fvNspPzFHidfIIkVaWVQB5lFr_HKsEWAZZemFxgkg9w?e=946Q9e"
     
     # Procesar acciones de inscribir, cancelar o listar
     if student_id:

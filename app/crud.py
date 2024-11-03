@@ -126,7 +126,8 @@ def enroll_student_in_subject(student_data: dict, subject_code: str = None):
                         WHERE student_id = %s AND subject_code = %s
                     """, (student_id, subject_code))
                     conn.commit()
-                    return {"message": f"La materia {subject_code} ha sido reinscrita exitosamente."}
+                    return {"message": f"La materia {subject_code} ha sido reinscrita exitosamente."
+                            }
                 else:
                     return {"message": "Ya has inscrita esta materia previamente y no está reprobada."}
             
@@ -169,6 +170,7 @@ def enroll_student_in_subject(student_data: dict, subject_code: str = None):
                 }
             else:
                 return {
+                    "options": ["Cancelar materia", "Listar materias", "Salir"],
                     "total_credits": total_credits_after,
                     "credits_remaining": credits_remaining,
                     "message": "Materia inscrita exitosamente.\nContinuar inscribiendo otra materia."
