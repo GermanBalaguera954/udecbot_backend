@@ -4,7 +4,10 @@ from .database import get_db_connection
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
+from psycopg2.extras import RealDictCursor
+
 def get_student_info(student_id: int):
+    print(f"Buscando información para student_id: {student_id}")
     conn = get_db_connection()
     cur = conn.cursor(cursor_factory=RealDictCursor)  # Usar RealDictCursor para obtener diccionarios
     try:
@@ -14,7 +17,7 @@ def get_student_info(student_id: int):
         
         if not result:
             print("No se encontró el estudiante en la base de datos.")
-            return None
+            return None  # Devolver None si el estudiante no existe
 
         name = result["name"]
         current_semester = result["current_semester"]
@@ -47,8 +50,8 @@ def get_student_info(student_id: int):
             "credits_used": credits_used
         }
     except Exception as e:
-        print(f"Error detallado: {str(e)}")
-        return {"message": f"Error al obtener la información del estudiante: {str(e)}"}
+        print(f"Error detallado al obtener la información del estudiante: {str(e)}")
+        return None  # Retornar None en caso de error
     finally:
         cur.close()
         conn.close()
@@ -63,6 +66,27 @@ def enroll_student_in_subject(student_data: dict, subject_code: str = None):
         # Extraer información del estudiante de los datos recibidos
         student_id = student_data["id"]
         current_semester = student_data["current_semester"]
+
+        # Verificar los créditos ya inscritos
+        cur.execute("""
+            SELECT SUM(subjects.credits) as total_credits 
+            FROM enrollments 
+            JOIN subjects ON enrollments.subject_code = subjects.code 
+            WHERE enrollments.student_id = %s 
+            AND (subjects.semester = %s OR enrollments.status = 'reinscrita')
+            AND enrollments.status IN ('inscrita', 'reinscrita')
+        """, (student_id, current_semester))
+
+        total_credits = cur.fetchone()['total_credits'] or 0
+
+        # Respuesta inmediata si el estudiante ya alcanzó el límite de créditos
+        if total_credits >= 18:
+            return {
+                "message": "No tienes más créditos disponibles para inscribir materias este semestre.",
+                "total_credits": total_credits,
+                "credits_remaining": 0,
+                "options": ["Cancelar materia", "Listar materias", "Salir"]
+            }
 
         # Inscribir automáticamente materias DN-CAI hasta el semestre actual
         for semester in range(1, current_semester + 1):
@@ -87,7 +111,7 @@ def enroll_student_in_subject(student_data: dict, subject_code: str = None):
 
         # Continuar solo si hay un `subject_code` específico para inscribir
         if subject_code:
-            # 1. Comprobar si la materia existe y pertenece al semestre correcto
+            # Comprobar si la materia existe y pertenece al semestre correcto
             cur.execute("""
                 SELECT semester, requirements, credits FROM subjects WHERE code = %s
             """, (subject_code,))
@@ -99,7 +123,7 @@ def enroll_student_in_subject(student_data: dict, subject_code: str = None):
             if subject_info["semester"] > current_semester + 2:
                 return {"message": "No puedes inscribir materias de más de dos semestres por delante del actual."}
 
-            # 2. Validar si el estudiante cumple los requisitos necesarios
+            # Validar requisitos y estado de inscripción
             requirements = subject_info['requirements'].split(', ') if subject_info['requirements'] else []
             if requirements:
                 requirements_clean = [req.replace('R - ', '').strip() for req in requirements]
@@ -111,7 +135,6 @@ def enroll_student_in_subject(student_data: dict, subject_code: str = None):
                 if len(cur.fetchall()) < len(requirements_clean):
                     return {"message": f"No puedes inscribir {subject_code} porque no has aprobado los prerrequisitos necesarios."}
 
-            # 3. Verificar si la materia ya está inscrita o reprobada
             cur.execute("""
                 SELECT status FROM enrollments 
                 WHERE student_id = %s AND subject_code = %s
@@ -126,41 +149,30 @@ def enroll_student_in_subject(student_data: dict, subject_code: str = None):
                         WHERE student_id = %s AND subject_code = %s
                     """, (student_id, subject_code))
                     conn.commit()
-                    return {"message": f"La materia {subject_code} ha sido reinscrita exitosamente."
-                            }
+                    return {"message": f"La materia {subject_code} ha sido reinscrita exitosamente."}
                 else:
                     return {"message": "Ya has inscrita esta materia previamente y no está reprobada."}
-            
-            # 4. Comprobar si hay créditos suficientes disponibles
-            cur.execute("""
-                SELECT SUM(subjects.credits) as total_credits 
-                FROM enrollments 
-                JOIN subjects ON enrollments.subject_code = subjects.code 
-                WHERE enrollments.student_id = %s 
-                AND (subjects.semester = %s OR enrollments.status = 'reinscrita')
-                AND enrollments.status IN ('inscrita', 'reinscrita')
-            """, (student_id, current_semester))
-            
-            total_credits_after = (cur.fetchone()['total_credits'] or 0) + subject_info['credits']
+
+            # Verificar si hay créditos suficientes disponibles
+            total_credits_after = total_credits + subject_info['credits']
             credits_remaining = 18 - total_credits_after
 
-            # Respuesta según el límite de créditos
             if credits_remaining < 0:
                 return {
                     "message": "No puedes inscribir esta materia porque excede el límite de 18 créditos.",
-                    "total_credits": total_credits_after,
-                    "credits_remaining": credits_remaining + subject_info['credits'],  # Ajuste para mostrar los créditos previos al intento
+                    "total_credits": total_credits,
+                    "credits_remaining": 0,
                     "options": ["Cancelar materia", "Listar materias", "Salir"]
                 }
 
-            # 5. Inscribir la materia si cumple todas las condiciones
+            # Inscribir la materia si cumple todas las condiciones
             cur.execute("""
                 INSERT INTO enrollments (student_id, subject_code, enrollment_date, status) 
                 VALUES (%s, %s, NOW(), 'inscrita')
             """, (student_id, subject_code))
-            conn.commit()  # Confirmar la transacción solo después de pasar todas las validaciones
+            conn.commit()
 
-            # Actualizar la respuesta con la confirmación
+            # Respuesta de confirmación
             if credits_remaining == 0:
                 return {
                     "message": "Materia inscrita exitosamente.\n\nHaz alcanzado el límite de créditos permitidos para este semestre.",
@@ -185,7 +197,7 @@ def enroll_student_in_subject(student_data: dict, subject_code: str = None):
             cur.close()
             conn.close()
 
-def cancel_subject(student_id: int, subject_code: str, current_semester: int):
+def cancel_subject(student_id: int, subject_code: str):
     conn = get_db_connection()
     cur = conn.cursor()
 
@@ -259,10 +271,13 @@ def cancel_subject(student_id: int, subject_code: str, current_semester: int):
             cur.close()
             conn.close()
 
-def list_enrollments(student_id: int, current_semester: int = None):
+def list_enrollments(student_id: int):
     conn = None
     try:
         conn = get_db_connection()
+        if conn is None:
+            raise psycopg2.DatabaseError("No se pudo establecer la conexión con la base de datos.")
+
         cur = conn.cursor(cursor_factory=RealDictCursor)
 
         # Obtener todas las materias inscritas y reinscritas para el estudiante, sin importar el semestre
@@ -300,7 +315,11 @@ def list_enrollments(student_id: int, current_semester: int = None):
         return response
 
     except psycopg2.DatabaseError as db_error:
+        print(f"Error al acceder a la base de datos: {db_error}")
         return {"message": f"Error al listar materias: {str(db_error)}"}
+    except Exception as e:
+        print(f"Error inesperado al listar materias: {e}")
+        return {"message": "Hubo un problema al intentar listar tus materias. Intenta nuevamente o contacta soporte."}
     finally:
         if conn:
             cur.close()

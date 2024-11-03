@@ -1,28 +1,18 @@
-# intents.py
-
 INTENT_VOCABULARY = {
     "saludo": [
-        "hola", "saludar", "buenas", "que tal", "que más", "cómo estás", "día", "tarde", "noche", 
-        "hey", "saludos", "qué onda", "hola qué tal", "buenos días", "buenas tardes", "buenas noches",
-        "qué hubo", "cómo te va", "cómo van las cosas", "qué cuentas"
+        "hola", "buenas", "buen", "dia", "que tal", "como estas", "saludos", "buenos dias", "buenas noches", "hey", "holis"
     ],
     "inscribir": [
-        "inscribir", "matricular", "añadir", "agregar", "registrar", "apuntar", "poner en lista", 
-        "quiero inscribir", "necesito inscribir", "deseo inscribir", "me gustaría inscribir",
-        "inscribir materia", "matricular curso", "añadir asignatura", "poner en lista"
+        "inscribir", "matricular", "añadir", "agregar", "registrar"
     ],
     "cancelar": [
-        "cancelar", "remover", "eliminar", "retirar", "quitar", "desapuntar", "dar de baja", 
-        "quiero cancelar", "necesito cancelar", "deseo cancelar", "me gustaría cancelar",
-        "quitar materia", "retirar asignatura", "anular inscripción", "borrar de la lista"
+        "cancelar", "dar de baja", "eliminar", "quitar", "retirar"
     ],
     "listar": [
-        "listar", "ver", "mostrar", "consultar", "chequear", "revisar", "mirar", "quiero ver", 
-        "necesito ver", "deseo ver", "me gustaría ver", "ver lista", "mostrar lista", "consultar materias",
-        "ver asignaturas", "chequear inscripciones", "revisar materias inscritas", "ver mis cursos"
+        "listar", "ver materias", "consultar materias", "mostrar materias", "mis materias", 
+        "ver lista", "lista de materias", "chequear materias", "ver asignaturas", "mostrar asignaturas"
     ],
     "salir": [
-        "salir", "cerrar", "adiós", "chao", "hasta luego", "me voy", "nos vemos", "gracias y adiós", 
-        "finalizar", "terminar"
+        "salir", "cerrar sesion", "adios", "hasta luego", "me voy", "terminar", "nos vemos"
     ]
 }
