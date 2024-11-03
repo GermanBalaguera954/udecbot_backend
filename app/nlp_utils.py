@@ -102,6 +102,9 @@ def process_nlp_and_act(user_input: str, student_id: int = None):
             "message": "Gracias por utilizar el chatbot. ¡Hasta luego!",
             "exit": True
         }
+        
+    # URL del archivo de Excel con los códigos de materias
+    link_excel = "https://mailunicundiedu-my.sharepoint.com/:b:/g/personal/gbalaguera_ucundinamarca_edu_co/EZ4fvNspPzFHidfIIkVaWVQB5lFr_HKsEWAZZemFxgkg9w?e=946Q9e"
 
     # Procesar acciones de inscribir, cancelar o listar
     if student_id:
@@ -111,13 +114,15 @@ def process_nlp_and_act(user_input: str, student_id: int = None):
             subject_code = extract_subject_code(doc)
             if subject_code:
                 return enroll_student_in_subject({"id": student_id, "current_semester": student_info["current_semester"]}, subject_code)
-            return {"message": "Por favor, digita el código de la materia que deseas inscribir.\n"}
+            return {"message": "Por favor, digita el código de la materia que deseas inscribir.\n",
+            "link": link_excel}
 
         elif intent == "cancelar":
             subject_code = extract_subject_code(doc)
             if subject_code:
                 return cancel_subject(student_id, subject_code, student_info["current_semester"])
-            return {"message": "Por favor, proporciona el código de la materia que deseas cancelar."}
+            return {"message": "Por favor, proporciona el código de la materia que deseas cancelar.",
+            "link": link_excel}
 
         elif intent == "listar":
             return list_enrollments(student_id, student_info["current_semester"])
