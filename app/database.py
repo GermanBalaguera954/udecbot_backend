@@ -12,7 +12,6 @@ def get_db_connection():
         raise ValueError("DATABASE_URL no está definida en las variables de entorno")
 
     try:
-        # Intentar establecer la conexión
         conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
         return conn
     except psycopg2.DatabaseError as e:

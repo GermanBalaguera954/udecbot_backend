@@ -11,7 +11,7 @@ nlp = spacy.load("es_core_news_sm")
 stemmer = SnowballStemmer("spanish")
 
 last_message = None
-last_intent = None  # Almacena la última intención detectada para contexto
+last_intent = None
 
 # Función para cargar embeddings de intenciones
 def load_intent_embeddings():
@@ -50,13 +50,13 @@ def process_nlp_and_act(user_input: str, student_id: int):
     if student_info is None:
         return {"message": "No se encontró el estudiante en el sistema.", "error": True}
 
-    global last_message, last_intent  # Acceder a las variables globales
+    global last_message, last_intent
 
     # Evitar repetir la misma acción
     if user_input == last_message:
         return {"message": "Parece que estás enviando el mismo mensaje varias veces. ¿Quieres hacer algo diferente?", "repeat_warning": True}
     
-    last_message = user_input  # Actualizar el último mensaje
+    last_message = user_input
 
     doc = nlp(user_input)
 
@@ -69,19 +69,19 @@ def process_nlp_and_act(user_input: str, student_id: int):
 
     # Procesar intención específica
     if intent == "saludo":
-        last_intent = "saludo"  # Actualizar la última intención
+        last_intent = "saludo"
         return handle_greeting(student_id)
     elif intent == "inscribir":
-        last_intent = "inscribir"  # Actualizar la última intención
+        last_intent = "inscribir"
         return handle_enroll_request()
     elif intent == "cancelar":
-        last_intent = "cancelar"  # Actualizar la última intención
+        last_intent = "cancelar" 
         return handle_cancel_request()
     elif intent == "listar":
-        last_intent = "listar"  # Actualizar la última intención
+        last_intent = "listar" 
         return handle_list_enrollments(student_id)
     elif intent == "salir":
-        last_intent = "salir"  # Actualizar la última intención
+        last_intent = "salir" 
         return handle_exit()
 
     # Respuesta por defecto si no hay intención detectada
@@ -95,7 +95,7 @@ def handle_subject_code_intent(user_input, student_id):
             user_input
         )
     elif last_intent == "cancelar":
-        return cancel_subject(student_id, user_input)  # Eliminar `current_semester`
+        return cancel_subject(student_id, user_input)
     else:
         return {"message": "Por favor, indica si deseas inscribir o cancelar la materia."}
 

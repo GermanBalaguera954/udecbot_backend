@@ -9,7 +9,7 @@ from psycopg2.extras import RealDictCursor
 def get_student_info(student_id: int):
     print(f"Buscando información para student_id: {student_id}")
     conn = get_db_connection()
-    cur = conn.cursor(cursor_factory=RealDictCursor)  # Usar RealDictCursor para obtener diccionarios
+    cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
         # Obtener información del estudiante
         cur.execute("SELECT name, current_semester FROM students WHERE id = %s", (student_id,))
@@ -17,7 +17,7 @@ def get_student_info(student_id: int):
         
         if not result:
             print("No se encontró el estudiante en la base de datos.")
-            return None  # Devolver None si el estudiante no existe
+            return None
 
         name = result["name"]
         current_semester = result["current_semester"]
@@ -46,12 +46,12 @@ def get_student_info(student_id: int):
         return {
             "name": name,
             "current_semester": current_semester,
-            "subjects": subjects,  # Incluye el estado correctamente
+            "subjects": subjects,
             "credits_used": credits_used
         }
     except Exception as e:
         print(f"Error detallado al obtener la información del estudiante: {str(e)}")
-        return None  # Retornar None en caso de error
+        return None
     finally:
         cur.close()
         conn.close()
@@ -61,7 +61,7 @@ def enroll_student_in_subject(student_data: dict, subject_code: str = None):
     try:
         conn = get_db_connection()
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        conn.autocommit = False  # Iniciar transacción
+        conn.autocommit = False
 
         student_id = student_data["id"]
         current_semester = student_data["current_semester"]
