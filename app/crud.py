@@ -63,11 +63,10 @@ def enroll_student_in_subject(student_data: dict, subject_code: str = None):
         cur = conn.cursor(cursor_factory=RealDictCursor)
         conn.autocommit = False  # Iniciar transacción
 
-        # Extraer información del estudiante de los datos recibidos
         student_id = student_data["id"]
         current_semester = student_data["current_semester"]
 
-        # Verificar los créditos ya inscritos
+        # Verificar los créditos ya inscritos para el semestre actual
         cur.execute("""
             SELECT SUM(subjects.credits) as total_credits 
             FROM enrollments 
@@ -79,7 +78,7 @@ def enroll_student_in_subject(student_data: dict, subject_code: str = None):
 
         total_credits = cur.fetchone()['total_credits'] or 0
 
-        # Respuesta inmediata si el estudiante ya alcanzó el límite de créditos
+        # Verificar si el estudiante alcanzó el límite de créditos
         if total_credits >= 18:
             return {
                 "message": "No tienes más créditos disponibles para inscribir materias este semestre.",
@@ -153,7 +152,7 @@ def enroll_student_in_subject(student_data: dict, subject_code: str = None):
                 else:
                     return {"message": "Ya has inscrita esta materia previamente y no está reprobada."}
 
-            # Verificar si hay créditos suficientes disponibles
+            # Verificar si hay créditos suficientes disponibles después de inscribir esta materia
             total_credits_after = total_credits + subject_info['credits']
             credits_remaining = 18 - total_credits_after
 
@@ -172,21 +171,24 @@ def enroll_student_in_subject(student_data: dict, subject_code: str = None):
             """, (student_id, subject_code))
             conn.commit()
 
+            # Consultar créditos totales después de inscripción
+            cur.execute("""
+                SELECT SUM(subjects.credits) as total_credits 
+                FROM enrollments 
+                JOIN subjects ON enrollments.subject_code = subjects.code 
+                WHERE enrollments.student_id = %s 
+                AND enrollments.status IN ('inscrita', 'reinscrita')
+            """, (student_id,))
+            total_credits_after = cur.fetchone()['total_credits'] or 0
+            credits_remaining = 18 - total_credits_after
+
             # Respuesta de confirmación
-            if credits_remaining == 0:
-                return {
-                    "message": "Materia inscrita exitosamente.\n\nHaz alcanzado el límite de créditos permitidos para este semestre.",
-                    "total_credits": total_credits_after,
-                    "credits_remaining": credits_remaining,
-                    "options": ["Cancelar materia", "Listar materias", "Salir"]
-                }
-            else:
-                return {
-                    "options": ["Cancelar materia", "Listar materias", "Salir"],
-                    "total_credits": total_credits_after,
-                    "credits_remaining": credits_remaining,
-                    "message": "Materia inscrita exitosamente.\nContinuar inscribiendo otra materia."
-                }
+            return {
+                "message": "Materia inscrita exitosamente.",
+                "total_credits": total_credits_after,
+                "credits_remaining": credits_remaining,
+                "options": ["Cancelar materia", "Listar materias", "Salir"]
+            }
 
     except psycopg2.DatabaseError as e:
         if conn:

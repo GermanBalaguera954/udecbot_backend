@@ -1,17 +1,19 @@
 import spacy
+from sentence_transformers import SentenceTransformer, util
+from nltk.stem import SnowballStemmer
 from .crud import get_student_info, enroll_student_in_subject, cancel_subject, list_enrollments
 from .intents import INTENT_VOCABULARY
 import re
-from sentence_transformers import SentenceTransformer, util
 
-# Cargar el modelo de embeddings y el modelo NLP de spaCy
+# Cargar modelos y herramientas
 embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
 nlp = spacy.load("es_core_news_sm")
+stemmer = SnowballStemmer("spanish")
 
 last_message = None
 last_intent = None  # Almacena la última intención detectada para contexto
 
-# Cargar embeddings de intenciones
+# Función para cargar embeddings de intenciones
 def load_intent_embeddings():
     intent_embeddings = {}
     for intent, examples in INTENT_VOCABULARY.items():
@@ -20,13 +22,14 @@ def load_intent_embeddings():
 
 intent_embeddings = load_intent_embeddings()
 
-# Detecta la intención con embeddings
 def detect_intent(doc):
+    # Embedding de la frase completa
     message_embedding = embedding_model.encode(doc.text)
     best_intent = None
     highest_similarity = 0.0
-    similarity_threshold = 0.5  # Ajustado para mejorar precisión en casos específicos
+    similarity_threshold = 0.5
 
+    # Comparar embeddings de intenciones
     for intent, embeddings in intent_embeddings.items():
         for intent_embedding in embeddings:
             similarity = util.cos_sim(message_embedding, intent_embedding).item()
@@ -43,48 +46,45 @@ def is_subject_code(text):
 
 # Procesa el mensaje y actúa en base a la intención
 def process_nlp_and_act(user_input: str, student_id: int):
-    print(f"ID de estudiante recibido en process_nlp_and_act: {student_id}")
     student_info = get_student_info(student_id)
     if student_info is None:
-        return {
-            "message": "No se encontró el estudiante en el sistema o hubo un error al recuperar los datos.",
-            "error": True
-        }
+        return {"message": "No se encontró el estudiante en el sistema.", "error": True}
 
-    global last_message, last_intent
+    global last_message, last_intent  # Acceder a las variables globales
 
-    # Evitar repetición de mensajes
+    # Evitar repetir la misma acción
     if user_input == last_message:
-        return {
-            "message": "Parece que estás enviando el mismo mensaje varias veces. ¿Hay algo más en lo que puedo ayudarte?",
-            "repeat_warning": True
-        }
-    last_message = user_input  # Actualizar último mensaje
+        return {"message": "Parece que estás enviando el mismo mensaje varias veces. ¿Quieres hacer algo diferente?", "repeat_warning": True}
     
-    doc = nlp(user_input)
-    intent = detect_intent(doc)
-    
-    # Actualiza last_intent solo si la intención fue detectada
-    if intent:
-        last_intent = intent
+    last_message = user_input  # Actualizar el último mensaje
 
-    # Detecta y maneja códigos de materia si es aplicable
+    doc = nlp(user_input)
+
+    # Detectar intención
+    intent = detect_intent(doc)
+
+    # Detectar códigos de materia
     if is_subject_code(user_input):
         return handle_subject_code_intent(user_input, student_id)
 
-    # Procesa cada intención específica
+    # Procesar intención específica
     if intent == "saludo":
+        last_intent = "saludo"  # Actualizar la última intención
         return handle_greeting(student_id)
     elif intent == "inscribir":
+        last_intent = "inscribir"  # Actualizar la última intención
         return handle_enroll_request()
     elif intent == "cancelar":
+        last_intent = "cancelar"  # Actualizar la última intención
         return handle_cancel_request()
     elif intent == "listar":
+        last_intent = "listar"  # Actualizar la última intención
         return handle_list_enrollments(student_id)
     elif intent == "salir":
+        last_intent = "salir"  # Actualizar la última intención
         return handle_exit()
 
-    # Respuesta por defecto si no se detecta una intención válida
+    # Respuesta por defecto si no hay intención detectada
     return {"message": "Lo siento, no entendí tu solicitud. Por favor intenta nuevamente."}
 
 # Maneja cada intención específica
@@ -117,7 +117,7 @@ def handle_cancel_request():
             "link": "https://acortar.link/zA3Dl5"}
 
 def handle_list_enrollments(student_id):
-    return list_enrollments(student_id) 
+    return list_enrollments(student_id)
 
 def handle_exit():
     return {"message": "Gracias por utilizar el chatbot. ¡Hasta luego!", "exit": True}
